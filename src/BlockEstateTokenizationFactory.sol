@@ -8,13 +8,16 @@ import "./BlockEstatePropertyToken.sol";
 import "./interfaces/IBlockEstateAccessController.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
-contract BlockEstateTokenizationFactory is ReentrancyGuard{
+contract BlockEstateTokenizationFactory is ReentrancyGuard {
 
     using SafeERC20 for IERC20;
+
     BlockEstateRouter public router;
     address public authorizedGateway;
 
     address[] public properties;
+
+    mapping(address => bool) public isValidProperty;
 
     event PropertyCreated(address indexed property);
     event Invested(address indexed user, address indexed property, uint256 amount);
@@ -33,6 +36,10 @@ contract BlockEstateTokenizationFactory is ReentrancyGuard{
         _;
     }
 
+    /*//////////////////////////////////////////////////////////////
+                        PROPERTY CREATION
+    //////////////////////////////////////////////////////////////*/
+
     function createProperty(
         string memory name,
         string memory symbol,
@@ -40,7 +47,8 @@ contract BlockEstateTokenizationFactory is ReentrancyGuard{
         address owner
     ) external returns (address) {
 
-        IBlockEstateAccessController(router.accessController()).enforceAdmin(msg.sender);
+        IBlockEstateAccessController(router.accessController())
+            .enforceAdmin(msg.sender);
 
         address property = address(
             new BlockEstatePropertyToken(
@@ -55,18 +63,26 @@ contract BlockEstateTokenizationFactory is ReentrancyGuard{
 
         properties.push(property);
 
+        // ✅ Mark as valid
+        isValidProperty[property] = true;
+
         emit PropertyCreated(property);
         return property;
     }
+
+    /*//////////////////////////////////////////////////////////////
+                        INVEST (ON-CHAIN)
+    //////////////////////////////////////////////////////////////*/
 
     function invest(address property, uint256 amount)
         external
         nonReentrant
         onlyCompliant(msg.sender)
     {
-        require(amount > 0, "INVALID");
         require(amount > 0, "INVALID_AMOUNT");
-        require(property != address(0), "INVALID_PROPERTY");
+
+        // ✅ CRITICAL FIX
+        require(isValidProperty[property], "INVALID_PROPERTY");
 
         require(router.stableToken() != address(0), "INVALID_STABLE_TOKEN");
         require(router.treasury() != address(0), "INVALID_TREASURY");
@@ -76,37 +92,49 @@ contract BlockEstateTokenizationFactory is ReentrancyGuard{
         // transfer USDC → treasury
         stable.safeTransferFrom(msg.sender, router.treasury(), amount);
 
-        // mint shares 1:1 (can upgrade later to pricing model)
+        // mint shares
         BlockEstatePropertyToken(property).mint(msg.sender, amount);
 
         emit Invested(msg.sender, property, amount);
     }
 
+    /*//////////////////////////////////////////////////////////////
+                        INVEST (FIAT)
+    //////////////////////////////////////////////////////////////*/
+
     function investFromFiat(
-       address property,
-       address user,
-       uint256 amount
-    ) external   {
+        address property,
+        address user,
+        uint256 amount
+    ) external {
 
-      require(msg.sender == authorizedGateway, "NOT_GATEWAY");
-      require(property != address(0), "INVALID_PROPERTY");
-      require(user != address(0), "INVALID_USER");
-      require(amount > 0, "INVALID_AMOUNT");
+        require(msg.sender == authorizedGateway, "NOT_GATEWAY");
+        require(user != address(0), "INVALID_USER");
+        require(amount > 0, "INVALID_AMOUNT");
 
-      IBlockEstateAccessController ac =
-      IBlockEstateAccessController(router.accessController());
+        // ✅ CRITICAL FIX HERE TOO
+        require(isValidProperty[property], "INVALID_PROPERTY");
 
-      require(!ac.isBlacklisted(user), "BLACKLISTED");
-      require(ac.isKYCApproved(user), "KYC_REQUIRED");
+        IBlockEstateAccessController ac =
+            IBlockEstateAccessController(router.accessController());
 
-      BlockEstatePropertyToken(property).mint(user, amount);
+        require(!ac.isBlacklisted(user), "BLACKLISTED");
+        require(ac.isKYCApproved(user), "KYC_REQUIRED");
 
-      emit Invested(user, property, amount);
+        BlockEstatePropertyToken(property).mint(user, amount);
+
+        emit Invested(user, property, amount);
     }
 
+    /*//////////////////////////////////////////////////////////////
+                        ADMIN
+    //////////////////////////////////////////////////////////////*/
+
     function setAuthorizedGateway(address gateway) external {
-      IBlockEstateAccessController(router.accessController()).enforceAdmin(msg.sender);
-      authorizedGateway = gateway;
+        IBlockEstateAccessController(router.accessController())
+            .enforceAdmin(msg.sender);
+
+        authorizedGateway = gateway;
     }
 
     function totalProperties() external view returns (uint256) {

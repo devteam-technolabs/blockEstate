@@ -4,6 +4,7 @@ pragma solidity 0.8.33;
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import "./interfaces/IBlockEstateAccessController.sol";
 import "./BlockEstateRouter.sol";
+import {BlockEstateRevenueDistributor} from "./BlockEstateRevenueDistributor.sol";
 
 contract BlockEstatePropertyToken is ERC20 {
 
@@ -35,33 +36,35 @@ contract BlockEstatePropertyToken is ERC20 {
     function mint(address to, uint256 amount) external onlyFactory {
         _mint(to, amount);
     }
-    
+
     function _update(
       address from,
       address to,
       uint256 amount
     ) internal override {
-      // Skip checks for minting and burning
+
+      // skip mint/burn checks
       if (from == address(0) || to == address(0)) {
-        super._update(from, to, amount);
-        return;
+         super._update(from, to, amount);
+         return;
       }
 
-      IBlockEstateAccessController accessController =
-      IBlockEstateAccessController(router.accessController());
+      address distributor = router.revenueDistributor();
 
-      // Global protocol state check
-      require(!accessController.isProtocolPaused(), "PROTOCOL_PAUSED");
+      if (distributor != address(0)) {
+         BlockEstateRevenueDistributor(distributor)
+            .updateOnTransfer(address(this), from, to);
+      }
 
-      // Blacklist checks
-      require(!accessController.isBlacklisted(from), "SENDER_BLACKLISTED");
-      require(!accessController.isBlacklisted(to), "RECIPIENT_BLACKLISTED");
+      IBlockEstateAccessController accessController = IBlockEstateAccessController(router.accessController());
 
-      // Compliance checks
-      require(accessController.isKYCApproved(from), "SENDER_NOT_KYC");
-      require(accessController.isKYCApproved(to), "RECIPIENT_NOT_KYC");
+    require(!accessController.isProtocolPaused(), "PROTOCOL_PAUSED");
+    require(!accessController.isBlacklisted(from), "SENDER_BLACKLISTED");
+    require(!accessController.isBlacklisted(to), "RECIPIENT_BLACKLISTED");
+    require(accessController.isKYCApproved(from), "SENDER_NOT_KYC");
+    require(accessController.isKYCApproved(to), "RECIPIENT_NOT_KYC");
 
-      super._update(from, to, amount);
-    }
+    super._update(from, to, amount);
+}
 
 }

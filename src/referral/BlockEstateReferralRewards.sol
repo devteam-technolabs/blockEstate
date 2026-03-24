@@ -1,31 +1,48 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.33;
 
-import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
 import "../BlockEstateRouter.sol";
 import "../interfaces/IBlockEstateAccessController.sol";
-import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
 contract BlockEstateReferralRewards is ReentrancyGuard {
-
     using SafeERC20 for IERC20;
+
     BlockEstateRouter public router;
 
+    // user => referrer
     mapping(address => address) public referrerOf;
+
+    // referrer => accumulated rewards (USDC 6 decimals)
     mapping(address => uint256) public rewards;
 
-    event ReferralSet(address user, address referrer);
-    event RewardAdded(address referrer, uint256 amount);
-    event Claimed(address user, uint256 amount);
+    // configurable referral percentage (e.g. 500 = 5%)
+    uint256 public referralBps = 500;
+    uint256 public constant BPS = 10_000;
+
+    event ReferralSet(address indexed user, address indexed referrer);
+    event RewardAdded(address indexed referrer, address indexed user, uint256 amount);
+    event Claimed(address indexed user, uint256 amount);
+    event ReferralBpsUpdated(uint256 newBps);
 
     constructor(address router_) {
         router = BlockEstateRouter(router_);
     }
 
+    /*//////////////////////////////////////////////////////////////
+                            MODIFIERS
+    //////////////////////////////////////////////////////////////*/
+
     modifier onlyFactory() {
         require(msg.sender == router.factory(), "NOT_FACTORY");
+        _;
+    }
+
+    modifier onlyAdmin() {
+        IBlockEstateAccessController(router.accessController())
+            .enforceAdmin(msg.sender);
         _;
     }
 
@@ -38,36 +55,84 @@ contract BlockEstateReferralRewards is ReentrancyGuard {
         _;
     }
 
+    /*//////////////////////////////////////////////////////////////
+                        SET REFERRER
+    //////////////////////////////////////////////////////////////*/
+
     function setReferrer(address referrer)
         external
         onlyCompliant(msg.sender)
     {
-        require(referrer != msg.sender, "SELF");
-        require(referrerOf[msg.sender] == address(0), "EXISTS");
+        require(referrer != address(0), "INVALID_REFERRER");
+        require(referrer != msg.sender, "SELF_REFERRAL");
+        require(referrerOf[msg.sender] == address(0), "ALREADY_SET");
+
+        IBlockEstateAccessController ac =
+            IBlockEstateAccessController(router.accessController());
+
+        require(ac.isKYCApproved(referrer), "REFERRER_NOT_KYC");
 
         referrerOf[msg.sender] = referrer;
+
         emit ReferralSet(msg.sender, referrer);
     }
 
-    function registerReward(address user, uint256 amount)
+    /*//////////////////////////////////////////////////////////////
+                        REGISTER REWARD (FROM FACTORY)
+    //////////////////////////////////////////////////////////////*/
+
+    function registerReward(address user, uint256 investmentAmount)
         external
         onlyFactory
     {
         address ref = referrerOf[user];
-        if (ref != address(0)) {
-            rewards[ref] += amount;
-            emit RewardAdded(ref, amount);
-        }
+        if (ref == address(0)) return;
+
+        // calculate reward using BPS
+        uint256 reward = (investmentAmount * referralBps) / BPS;
+
+        if (reward == 0) return;
+
+        rewards[ref] += reward;
+
+        emit RewardAdded(ref, user, reward);
     }
 
-    function claim() external nonReentrant {
-        require(router.stableToken() != address(0), "NO_STABLE");
+    /*//////////////////////////////////////////////////////////////
+                            CLAIM
+    //////////////////////////////////////////////////////////////*/
+
+    function claim()
+        external
+        nonReentrant
+        onlyCompliant(msg.sender)
+    {
         uint256 amount = rewards[msg.sender];
         require(amount > 0, "NO_REWARD");
 
         rewards[msg.sender] = 0;
+
         IERC20(router.stableToken()).safeTransfer(msg.sender, amount);
 
         emit Claimed(msg.sender, amount);
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                        ADMIN CONFIG
+    //////////////////////////////////////////////////////////////*/
+
+    function setReferralBps(uint256 newBps) external onlyAdmin {
+        require(newBps <= 2000, "TOO_HIGH"); // max 20%
+        referralBps = newBps;
+
+        emit ReferralBpsUpdated(newBps);
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                        VIEW
+    //////////////////////////////////////////////////////////////*/
+
+    function pendingReward(address user) external view returns (uint256) {
+        return rewards[user];
     }
 }

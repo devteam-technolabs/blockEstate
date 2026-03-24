@@ -9,6 +9,7 @@ contract BlockEstateRouter {
     address public factory;
     address public treasury;
     address public stableToken;
+    address public revenueDistributor;
 
     event Updated(string indexed key, address value);
 
@@ -36,6 +37,10 @@ contract BlockEstateRouter {
         emit Updated("STABLE", _token);
     }
 
+    function setRevenueDistributor(address _addr) external onlyAdmin {
+        revenueDistributor = _addr;
+    }
+
     function confirmAccessControllerUpdate() external view {
         require(msg.sender == accessController, "NOT_ACCESS_CONTROLLER");
     }
@@ -43,4 +48,5 @@ contract BlockEstateRouter {
     function getAccessController() external view returns (address) {
         return accessController;
     }
+
 }
