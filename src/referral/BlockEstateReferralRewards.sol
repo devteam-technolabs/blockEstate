@@ -7,18 +7,18 @@ import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "../BlockEstateRouter.sol";
 import "../interfaces/IBlockEstateAccessController.sol";
 
+/**
+ * @title BlockEstateReferralRewards
+ * @dev Tracks and distributes referral rewards.
+ */
 contract BlockEstateReferralRewards is ReentrancyGuard {
     using SafeERC20 for IERC20;
 
     BlockEstateRouter public router;
 
-    // user => referrer
     mapping(address => address) public referrerOf;
-
-    // referrer => accumulated rewards (USDC 6 decimals)
     mapping(address => uint256) public rewards;
 
-    // configurable referral percentage (e.g. 500 = 5%)
     uint256 public referralBps = 500;
     uint256 public constant BPS = 10_000;
 
@@ -32,7 +32,7 @@ contract BlockEstateReferralRewards is ReentrancyGuard {
     }
 
     /*//////////////////////////////////////////////////////////////
-                            MODIFIERS
+                                MODIFIERS
     //////////////////////////////////////////////////////////////*/
 
     modifier onlyFactory() {
@@ -56,7 +56,7 @@ contract BlockEstateReferralRewards is ReentrancyGuard {
     }
 
     /*//////////////////////////////////////////////////////////////
-                        SET REFERRER
+                            REFERRAL SETUP
     //////////////////////////////////////////////////////////////*/
 
     function setReferrer(address referrer)
@@ -78,7 +78,7 @@ contract BlockEstateReferralRewards is ReentrancyGuard {
     }
 
     /*//////////////////////////////////////////////////////////////
-                        REGISTER REWARD (FROM FACTORY)
+                            ACCOUNTING
     //////////////////////////////////////////////////////////////*/
 
     function registerReward(address user, uint256 investmentAmount)
@@ -88,9 +88,7 @@ contract BlockEstateReferralRewards is ReentrancyGuard {
         address ref = referrerOf[user];
         if (ref == address(0)) return;
 
-        // calculate reward using BPS
         uint256 reward = (investmentAmount * referralBps) / BPS;
-
         if (reward == 0) return;
 
         rewards[ref] += reward;
@@ -99,7 +97,7 @@ contract BlockEstateReferralRewards is ReentrancyGuard {
     }
 
     /*//////////////////////////////////////////////////////////////
-                            CLAIM
+                                CLAIM
     //////////////////////////////////////////////////////////////*/
 
     function claim()
@@ -110,6 +108,9 @@ contract BlockEstateReferralRewards is ReentrancyGuard {
         uint256 amount = rewards[msg.sender];
         require(amount > 0, "NO_REWARD");
 
+        uint256 balance = IERC20(router.stableToken()).balanceOf(address(this));
+        require(balance >= amount, "INSUFFICIENT_FUNDS");
+
         rewards[msg.sender] = 0;
 
         IERC20(router.stableToken()).safeTransfer(msg.sender, amount);
@@ -118,18 +119,18 @@ contract BlockEstateReferralRewards is ReentrancyGuard {
     }
 
     /*//////////////////////////////////////////////////////////////
-                        ADMIN CONFIG
+                                ADMIN
     //////////////////////////////////////////////////////////////*/
 
     function setReferralBps(uint256 newBps) external onlyAdmin {
-        require(newBps <= 2000, "TOO_HIGH"); // max 20%
+        require(newBps <= 2000, "TOO_HIGH");
         referralBps = newBps;
 
         emit ReferralBpsUpdated(newBps);
     }
 
     /*//////////////////////////////////////////////////////////////
-                        VIEW
+                                VIEW
     //////////////////////////////////////////////////////////////*/
 
     function pendingReward(address user) external view returns (uint256) {

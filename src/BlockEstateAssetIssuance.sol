@@ -4,6 +4,10 @@ pragma solidity 0.8.33;
 import {BlockEstatePropertyToken} from "./BlockEstatePropertyToken.sol";
 import {IBlockEstateAssetIssuance} from "./interfaces/IBlockEstateAssetIssuance.sol";
 
+/**
+ * @title BlockEstateAssetIssuance
+ * @dev Responsible for deploying new property token contracts via the factory.
+ */
 contract BlockEstateAssetIssuance is IBlockEstateAssetIssuance {
 
     address public factory;
@@ -20,18 +24,17 @@ contract BlockEstateAssetIssuance is IBlockEstateAssetIssuance {
         address admin,
         address owner
     ) external override returns (address) {
-
         require(msg.sender == factory, "NOT_FACTORY");
-        
+
         return address(
-          new BlockEstatePropertyToken(
-              router,
-              factory,
-              name,
-              symbol,
-              admin,
-              owner
-          )
+            new BlockEstatePropertyToken(
+                router,
+                factory,
+                name,
+                symbol,
+                admin,
+                owner
+            )
         );
     }
 }

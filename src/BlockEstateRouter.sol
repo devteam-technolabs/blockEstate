@@ -1,8 +1,12 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.33;
 
-import "./interfaces/IBlockEstateAccessController.sol";
+import {IBlockEstateAccessController} from "./interfaces/IBlockEstateAccessController.sol";
 
+/**
+ * @title BlockEstateRouter
+ * @dev Stores core protocol addresses and allows controlled updates.
+ */
 contract BlockEstateRouter {
 
     address public accessController;
@@ -10,6 +14,7 @@ contract BlockEstateRouter {
     address public treasury;
     address public stableToken;
     address public revenueDistributor;
+    address public referralRewards;
 
     event Updated(string indexed key, address value);
 
@@ -41,6 +46,11 @@ contract BlockEstateRouter {
         revenueDistributor = _addr;
     }
 
+    function setReferralRewards(address _addr) external onlyAdmin {
+        referralRewards = _addr;
+        emit Updated("REFERRAL", _addr);
+    }
+
     function confirmAccessControllerUpdate() external view {
         require(msg.sender == accessController, "NOT_ACCESS_CONTROLLER");
     }
@@ -48,5 +58,4 @@ contract BlockEstateRouter {
     function getAccessController() external view returns (address) {
         return accessController;
     }
-
 }

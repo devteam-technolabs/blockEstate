@@ -2,10 +2,14 @@
 pragma solidity 0.8.33;
 
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
-import "./interfaces/IBlockEstateAccessController.sol";
-import "./BlockEstateRouter.sol";
+import {IBlockEstateAccessController} from "./interfaces/IBlockEstateAccessController.sol";
+import {BlockEstateRouter} from "./BlockEstateRouter.sol";
 import {BlockEstateRevenueDistributor} from "./BlockEstateRevenueDistributor.sol";
 
+/**
+ * @title BlockEstatePropertyToken
+ * @dev ERC20 representing fractional ownership of a property.
+ */
 contract BlockEstatePropertyToken is ERC20 {
 
     BlockEstateRouter public router;
@@ -36,35 +40,35 @@ contract BlockEstatePropertyToken is ERC20 {
     function mint(address to, uint256 amount) external onlyFactory {
         _mint(to, amount);
     }
-
+  
     function _update(
-      address from,
-      address to,
-      uint256 amount
+        address from,
+        address to,
+        uint256 amount
     ) internal override {
 
-      // skip mint/burn checks
-      if (from == address(0) || to == address(0)) {
-         super._update(from, to, amount);
-         return;
-      }
+        // Allow minting and burning without checks
+        if (from == address(0) || to == address(0)) {
+            super._update(from, to, amount);
+            return;
+        }
 
-      address distributor = router.revenueDistributor();
+        IBlockEstateAccessController ac =
+            IBlockEstateAccessController(router.accessController());
 
-      if (distributor != address(0)) {
-         BlockEstateRevenueDistributor(distributor)
-            .updateOnTransfer(address(this), from, to);
-      }
+        require(!ac.isProtocolPaused(), "PROTOCOL_PAUSED");
+        require(!ac.isBlacklisted(from), "SENDER_BLACKLISTED");
+        require(!ac.isBlacklisted(to), "RECIPIENT_BLACKLISTED");
+        require(ac.isKYCApproved(from), "SENDER_NOT_KYC");
+        require(ac.isKYCApproved(to), "RECIPIENT_NOT_KYC");
 
-      IBlockEstateAccessController accessController = IBlockEstateAccessController(router.accessController());
+        super._update(from, to, amount);
 
-    require(!accessController.isProtocolPaused(), "PROTOCOL_PAUSED");
-    require(!accessController.isBlacklisted(from), "SENDER_BLACKLISTED");
-    require(!accessController.isBlacklisted(to), "RECIPIENT_BLACKLISTED");
-    require(accessController.isKYCApproved(from), "SENDER_NOT_KYC");
-    require(accessController.isKYCApproved(to), "RECIPIENT_NOT_KYC");
-
-    super._update(from, to, amount);
-}
-
+        // Notify distributor on balance changes
+        address distributor = router.revenueDistributor();
+        if (distributor != address(0)) {
+            BlockEstateRevenueDistributor(distributor)
+                .updateOnTransfer(address(this), from, to);
+        }
+    } 
 }

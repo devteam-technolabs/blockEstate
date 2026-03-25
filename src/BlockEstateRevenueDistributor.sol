@@ -4,10 +4,15 @@ pragma solidity 0.8.33;
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
-import "./BlockEstateRouter.sol";
-import "./BlockEstatePropertyToken.sol";
-import "./interfaces/IBlockEstateAccessController.sol";
+import {BlockEstateRouter} from "./BlockEstateRouter.sol";
+import {BlockEstatePropertyToken} from "./BlockEstatePropertyToken.sol";
+import {IBlockEstateAccessController} from "./interfaces/IBlockEstateAccessController.sol";
+import {IBlockEstatePropertyToken} from "./interfaces/IBlockEstatePropertyToken.sol";
 
+/**
+ * @title BlockEstateRevenueDistributor
+ * @dev Distributes rental/yield revenue to property token holders.
+ */
 contract BlockEstateRevenueDistributor is ReentrancyGuard {
     using SafeERC20 for IERC20;
 
@@ -15,20 +20,20 @@ contract BlockEstateRevenueDistributor is ReentrancyGuard {
 
     uint256 public constant ACCURACY = 1e18;
 
-    // property => accumulated revenue per token
+    // property => cumulative revenue per token
     mapping(address => uint256) public accRevenuePerToken;
 
-    // property => user => reward debt
+    // property => user => accounted share
     mapping(address => mapping(address => uint256)) public rewardDebt;
 
-    // property => user => pending rewards
+    // property => user => unclaimed rewards
     mapping(address => mapping(address => uint256)) public pending;
 
+    // property => undistributed dust
     mapping(address => uint256) public leftover;
 
     event RevenueDeposited(address indexed property, uint256 amount);
     event Claimed(address indexed user, address indexed property, uint256 amount);
-
     event DustCarried(address indexed property, uint256 amount);
 
     constructor(address router_) {
@@ -36,7 +41,7 @@ contract BlockEstateRevenueDistributor is ReentrancyGuard {
     }
 
     /*//////////////////////////////////////////////////////////////
-                            MODIFIERS
+                                MODIFIERS
     //////////////////////////////////////////////////////////////*/
 
     modifier onlyPropertyOwner(address property) {
@@ -67,13 +72,12 @@ contract BlockEstateRevenueDistributor is ReentrancyGuard {
     {
         require(amount > 0, "INVALID_AMOUNT");
         require(
-            BlockEstatePropertyToken(property).factory() == router.factory(),
+            IBlockEstatePropertyToken(property).factory() == router.factory(),
             "INVALID_PROPERTY"
         );
 
         IERC20 stable = IERC20(router.stableToken());
 
-        // transfer funds
         stable.safeTransferFrom(msg.sender, address(this), amount);
 
         uint256 supply = BlockEstatePropertyToken(property).totalSupply();
@@ -96,7 +100,7 @@ contract BlockEstateRevenueDistributor is ReentrancyGuard {
     }
 
     /*//////////////////////////////////////////////////////////////
-                        UPDATE USER (CORE LOGIC)
+                        ACCOUNTING
     //////////////////////////////////////////////////////////////*/
 
     function _updateUser(address property, address user) internal {
@@ -117,7 +121,7 @@ contract BlockEstateRevenueDistributor is ReentrancyGuard {
     }
 
     /*//////////////////////////////////////////////////////////////
-                        CALLED BY TOKEN (CRITICAL)
+                        TOKEN HOOK
     //////////////////////////////////////////////////////////////*/
 
     function updateOnTransfer(
@@ -127,7 +131,7 @@ contract BlockEstateRevenueDistributor is ReentrancyGuard {
     ) external {
         require(msg.sender == property, "ONLY_PROPERTY_TOKEN");
         require(
-            BlockEstatePropertyToken(property).factory() == router.factory(),
+            IBlockEstatePropertyToken(property).factory() == router.factory(),
             "INVALID_PROPERTY"
         );
 
@@ -141,7 +145,7 @@ contract BlockEstateRevenueDistributor is ReentrancyGuard {
     }
 
     /*//////////////////////////////////////////////////////////////
-                            CLAIM
+                                CLAIM
     //////////////////////////////////////////////////////////////*/
 
     function claim(address property)
@@ -154,6 +158,9 @@ contract BlockEstateRevenueDistributor is ReentrancyGuard {
         uint256 amount = pending[property][msg.sender];
         require(amount > 0, "NO_REWARD");
 
+        uint256 balance = IERC20(router.stableToken()).balanceOf(address(this));
+        require(balance >= amount, "INSUFFICIENT_FUNDS");
+
         pending[property][msg.sender] = 0;
 
         IERC20(router.stableToken()).safeTransfer(msg.sender, amount);
@@ -162,7 +169,7 @@ contract BlockEstateRevenueDistributor is ReentrancyGuard {
     }
 
     /*//////////////////////////////////////////////////////////////
-                            VIEW
+                                VIEW
     //////////////////////////////////////////////////////////////*/
 
     function pendingRevenue(address property, address user)

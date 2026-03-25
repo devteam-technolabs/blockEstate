@@ -4,19 +4,13 @@ pragma solidity 0.8.33;
 import "@openzeppelin/contracts/access/extensions/AccessControlDefaultAdminRules.sol";
 import "@openzeppelin/contracts/utils/Pausable.sol";
 
-import "./interfaces/IBlockEstateAccessController.sol";
-import "./interfaces/IBlockEstateRouter.sol";
-import "./BlockEstateConfig.sol";
+import {IBlockEstateAccessController} from "./interfaces/IBlockEstateAccessController.sol";
+import {IBlockEstateRouter} from "./interfaces/IBlockEstateRouter.sol";
+import {BlockEstateConfig} from "./BlockEstateConfig.sol";
 
 /**
- * @title BlockEstate Access Control
- *
- * @notice
- * Central authority managing:
- * - Roles
- * - KYC
- * - Blacklist
- * - Global pause
+ * @title BlockEstateAccessControl
+ * @dev Central contract for roles, KYC, blacklist and protocol pause.
  */
 contract BlockEstateAccessControl is
     IBlockEstateAccessController,
@@ -37,7 +31,7 @@ contract BlockEstateAccessControl is
     }
 
     /*//////////////////////////////////////////////////////////////
-                            MODIFIERS
+                                MODIFIERS
     //////////////////////////////////////////////////////////////*/
 
     modifier onlyAdmin() {
@@ -66,7 +60,7 @@ contract BlockEstateAccessControl is
     }
 
     /*//////////////////////////////////////////////////////////////
-                        ADMIN VALIDATION (INTERFACE)
+                        ROLE VALIDATION (EXTERNAL)
     //////////////////////////////////////////////////////////////*/
 
     function enforceAdmin(address account) external view override {
@@ -78,12 +72,13 @@ contract BlockEstateAccessControl is
     }
 
     /*//////////////////////////////////////////////////////////////
-                            KYC
+                                KYC
     //////////////////////////////////////////////////////////////*/
 
     function approveKYC(address user) external onlyCompliance {
         require(!_kycApproved[user], "ALREADY_KYC");
 
+        // One-time gas sponsorship for new users
         if (!_sponsoredOnce[user]) {
             _sponsoredOnce[user] = true;
 
@@ -136,7 +131,7 @@ contract BlockEstateAccessControl is
     }
 
     /*//////////////////////////////////////////////////////////////
-                            PAUSE
+                                PAUSE
     //////////////////////////////////////////////////////////////*/
 
     function pause() external onlyEmergency {
@@ -157,7 +152,7 @@ contract BlockEstateAccessControl is
     }
 
     /*//////////////////////////////////////////////////////////////
-                            CONFIG
+                                CONFIG
     //////////////////////////////////////////////////////////////*/
 
     function setSponsorAmount(uint256 newAmount) external onlyAdmin {
@@ -176,7 +171,7 @@ contract BlockEstateAccessControl is
     }
 
     /*//////////////////////////////////////////////////////////////
-                            VIEW
+                                VIEW
     //////////////////////////////////////////////////////////////*/
 
     function owner()
