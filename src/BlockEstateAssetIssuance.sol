@@ -13,7 +13,14 @@ contract BlockEstateAssetIssuance is IBlockEstateAssetIssuance {
     address public factory;
     address public router;
 
+    modifier onlyFactory() {
+        require(msg.sender == factory, "NOT_FACTORY");
+        _;
+    }
+
     constructor(address factory_, address router_) {
+        require(factory_ != address(0), "INVALID_FACTORY");
+        require(router_ != address(0), "INVALID_ROUTER");
         factory = factory_;
         router = router_;
     }
@@ -23,8 +30,11 @@ contract BlockEstateAssetIssuance is IBlockEstateAssetIssuance {
         string memory symbol,
         address admin,
         address owner
-    ) external override returns (address) {
-        require(msg.sender == factory, "NOT_FACTORY");
+    ) external override onlyFactory returns (address) {
+        require(bytes(name).length > 0, "INVALID_NAME");
+        require(bytes(symbol).length > 0, "INVALID_SYMBOL");
+        require(admin != address(0), "INVALID_ADMIN");
+        require(owner != address(0), "INVALID_OWNER");
 
         return address(
             new BlockEstatePropertyToken(

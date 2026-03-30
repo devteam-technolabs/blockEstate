@@ -6,16 +6,18 @@ import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {BlockEstateRouter} from "./BlockEstateRouter.sol";
 import {BlockEstatePropertyToken} from "./BlockEstatePropertyToken.sol";
 import {IBlockEstateAccessController} from "./interfaces/IBlockEstateAccessController.sol";
+import {IBlockEstateAssetIssuance} from "./interfaces/IBlockEstateAssetIssuance.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
 import {IBlockEstateReferralRewards} from "./interfaces/IBlockEstateReferralRewards.sol";
+import {BlockEstateConfig} from "./BlockEstateConfig.sol";
 
 /**
  * @title BlockEstateTokenizationFactory
  * @dev Handles property deployment and investments (on-chain + fiat).
  */
-contract BlockEstateTokenizationFactory is ReentrancyGuard {
+contract BlockEstateTokenizationFactory is ReentrancyGuard, BlockEstateConfig {
 
     using SafeERC20 for IERC20;
     using MessageHashUtils for bytes32;
@@ -34,8 +36,10 @@ contract BlockEstateTokenizationFactory is ReentrancyGuard {
     event PropertyCreated(address indexed property);
     event Invested(address indexed user, address indexed property, uint256 amount);
     event FiatProcessed(address indexed user, uint256 amount, bytes32 paymentId);
+    event PlatformFeeUpdated(uint256 oldFee, uint256 newFee);
 
     constructor(address router_) {
+        require(router_ != address(0), "INVALID_ROUTER");
         router = BlockEstateRouter(router_);
     }
 
@@ -63,16 +67,14 @@ contract BlockEstateTokenizationFactory is ReentrancyGuard {
         IBlockEstateAccessController(router.accessController())
             .enforceAdmin(msg.sender);
 
-        address property = address(
-            new BlockEstatePropertyToken(
-                address(router),
-                address(this),
-                name,
-                symbol,
-                admin,
-                owner
-            )
-        );
+        require(admin != address(0), "INVALID_ADMIN");
+        require(owner != address(0), "INVALID_OWNER");
+        
+        address assetIssuance = router.assetIssuance();
+        require(assetIssuance != address(0), "ASSET_ISSUANCE_NOT_SET");
+        
+        address property = IBlockEstateAssetIssuance(assetIssuance)
+            .createPropertyToken(name, symbol, admin, owner);
 
         properties.push(property);
         isValidProperty[property] = true;
@@ -92,18 +94,22 @@ contract BlockEstateTokenizationFactory is ReentrancyGuard {
     {
         require(amount > 0, "INVALID_AMOUNT");
         require(isValidProperty[property], "INVALID_PROPERTY");
-        require(router.stableToken() != address(0), "INVALID_STABLE_TOKEN");
-        require(router.treasury() != address(0), "INVALID_TREASURY");
+        
+        address stableTokenAddr = router.stableToken();
+        address treasuryAddr = router.treasury();
+        
+        require(stableTokenAddr != address(0), "INVALID_STABLE_TOKEN");
+        require(treasuryAddr != address(0), "INVALID_TREASURY");
 
-        IERC20 stable = IERC20(router.stableToken());
+        IERC20 stable = IERC20(stableTokenAddr);
 
-        uint256 fee = (amount * platformFeeBps) / 10_000;
+        uint256 fee = (amount * platformFeeBps) / BPS;
         uint256 net = amount - fee;
 
         stable.safeTransferFrom(msg.sender, address(this), amount);
 
         if (net > 0) {
-            stable.safeTransfer(router.treasury(), net);
+            stable.safeTransfer(treasuryAddr, net);
         }
 
         address referralPool = router.referralRewards();
@@ -141,6 +147,8 @@ contract BlockEstateTokenizationFactory is ReentrancyGuard {
         IBlockEstateAccessController ac =
             IBlockEstateAccessController(router.accessController());
 
+        // Check pause state for fiat processing too
+        require(!ac.isProtocolPaused(), "PROTOCOL_PAUSED");
         require(!ac.isBlacklisted(user), "BLACKLISTED");
         require(ac.isKYCApproved(user), "KYC_REQUIRED");
 
@@ -163,7 +171,7 @@ contract BlockEstateTokenizationFactory is ReentrancyGuard {
         // prevent replay
         processedPayments[paymentId] = true;
 
-        uint256 fee = (amount * platformFeeBps) / 10_000;
+        uint256 fee = (amount * platformFeeBps) / BPS;
         uint256 net = amount - fee;
 
         address referralPool = router.referralRewards();
@@ -187,6 +195,19 @@ contract BlockEstateTokenizationFactory is ReentrancyGuard {
 
         require(signer != address(0), "INVALID_SIGNER");
         backendSigner = signer;
+    }
+
+    function setPlatformFeeBps(uint256 newFeeBps) external {
+        IBlockEstateAccessController(router.accessController())
+            .enforceAdmin(msg.sender);
+        
+        // Enforce fee cap from BlockEstateConfig
+        require(newFeeBps <= MAX_PLATFORM_FEE, "FEE_TOO_HIGH");
+        
+        uint256 oldFee = platformFeeBps;
+        platformFeeBps = newFeeBps;
+        
+        emit PlatformFeeUpdated(oldFee, newFeeBps);
     }
 
     function totalProperties() external view returns (uint256) {

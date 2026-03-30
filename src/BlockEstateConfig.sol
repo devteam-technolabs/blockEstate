@@ -34,4 +34,7 @@ abstract contract BlockEstateConfig {
 
     bytes32 public constant ROLE_EMERGENCY_ADMIN =
         keccak256("BLOCKESTATE_EMERGENCY_ADMIN");
+    
+    bytes32 public constant ROLE_BACKEND_SIGNER =
+        keccak256("BLOCKESTATE_BACKEND_SIGNER");
 }
