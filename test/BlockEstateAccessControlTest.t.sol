@@ -20,10 +20,15 @@ contract BlockEstateAccessControlTest is Test {
     bytes32 public constant ROLE_TREASURY_OPERATOR = keccak256("BLOCKESTATE_TREASURY_OPERATOR");
     
     function setUp() public {
+        // Deploy with admin as the default admin
         vm.prank(admin);
         accessController = new BlockEstateAccessControl();
         
-        // Grant roles
+        // Note: With AccessControlDefaultAdminRules, granting roles immediately
+        // might not work due to the 3-day delay. Use grantRole directly which
+        // bypasses the delay for non-admin roles, but admin role changes require delay.
+        
+        // Grant roles using the standard grantRole (these are fine for non-admin roles)
         vm.prank(admin);
         accessController.grantRole(ROLE_COMPLIANCE_OFFICER, complianceOfficer);
         
@@ -35,17 +40,30 @@ contract BlockEstateAccessControlTest is Test {
         
         vm.prank(admin);
         accessController.grantRole(ROLE_TREASURY_OPERATOR, treasuryOperator);
+        
+        // Warp time to bypass the 3-day delay for any admin operations if needed
+        vm.warp(block.timestamp + 4 days);
     }
     
-    function testDefaultAdminRole() public {
+    function testDefaultAdminRole() public view {
         assertTrue(accessController.hasRole(accessController.DEFAULT_ADMIN_ROLE(), admin));
         assertFalse(accessController.hasRole(accessController.DEFAULT_ADMIN_ROLE(), unauthorized));
     }
     
     function testGrantRole() public {
         address newAdmin = address(0x100);
+        
+        // For granting admin role, we need to use the default admin rules
+        // First, schedule the role change
         vm.prank(admin);
-        accessController.grantRole(accessController.DEFAULT_ADMIN_ROLE(), newAdmin);
+        accessController.beginDefaultAdminTransfer(newAdmin);
+        
+        // Warp past the delay
+        vm.warp(block.timestamp + 4 days);
+        
+        // Accept the role
+        vm.prank(newAdmin);
+        accessController.acceptDefaultAdminTransfer();
         
         assertTrue(accessController.hasRole(accessController.DEFAULT_ADMIN_ROLE(), newAdmin));
     }
@@ -65,7 +83,7 @@ contract BlockEstateAccessControlTest is Test {
     }
     
     function testOnlyAdminCanGrantRoles() public {
-        vm.expectRevert();
+        vm.expectRevert(); // AccessControlUnauthorizedAccount
         vm.prank(unauthorized);
         accessController.grantRole(ROLE_COMPLIANCE_OFFICER, address(0x100));
     }
@@ -92,9 +110,14 @@ contract BlockEstateAccessControlTest is Test {
         // Emergency admin should not have admin rights by default
         assertFalse(accessController.hasRole(accessController.DEFAULT_ADMIN_ROLE(), emergencyAdmin));
         
-        // But admin can grant emergency admin admin rights
+        // Grant emergency admin admin rights using the proper method
         vm.prank(admin);
-        accessController.grantRole(accessController.DEFAULT_ADMIN_ROLE(), emergencyAdmin);
+        accessController.beginDefaultAdminTransfer(emergencyAdmin);
+        
+        vm.warp(block.timestamp + 4 days);
+        
+        vm.prank(emergencyAdmin);
+        accessController.acceptDefaultAdminTransfer();
         
         assertTrue(accessController.hasRole(accessController.DEFAULT_ADMIN_ROLE(), emergencyAdmin));
     }
@@ -110,5 +133,41 @@ contract BlockEstateAccessControlTest is Test {
         
         assertTrue(accessController.hasRole(ROLE_COMPLIANCE_OFFICER, multiRoleUser));
         assertTrue(accessController.hasRole(ROLE_SECURITY_GUARD, multiRoleUser));
+    }
+    
+    function testKYCApproval() public {
+        address user = address(0x300);
+        vm.deal(user, 1 ether);
+        
+        vm.prank(complianceOfficer);
+        accessController.approveKYC(user);
+        
+        assertTrue(accessController.isKYCApproved(user));
+    }
+    
+    function testRevokeKYC() public {
+        address user = address(0x301);
+        vm.deal(user, 1 ether);
+        
+        vm.prank(complianceOfficer);
+        accessController.approveKYC(user);
+        
+        assertTrue(accessController.isKYCApproved(user));
+        
+        vm.prank(complianceOfficer);
+        accessController.revokeKYC(user);
+        
+        assertFalse(accessController.isKYCApproved(user));
+    }
+    
+    function testSponsorAmount() public {
+        uint256 initialSponsorAmount = accessController.sponsorAmount();
+        assertEq(initialSponsorAmount, 0.00025 ether);
+        
+        uint256 newAmount = 0.0005 ether;
+        vm.prank(admin);
+        accessController.setSponsorAmount(newAmount);
+        
+        assertEq(accessController.sponsorAmount(), newAmount);
     }
 }

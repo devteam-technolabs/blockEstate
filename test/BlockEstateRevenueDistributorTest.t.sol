@@ -6,9 +6,48 @@ import "../src/BlockEstateAccessController.sol";
 import "../src/BlockEstateRouter.sol";
 import "../src/BlockEstateRevenueDistributor.sol";
 import "../src/BlockEstatePropertyToken.sol";
-import "../src/BlockEstateTokenizationFactory.sol";
 
-contract MockERC20 {
+// Mock Router for testing - renamed functions to avoid conflicts
+contract MockRouterForRevenue {
+    address public accessController;
+    address public stableTokenAddress;
+    address public factoryAddress;
+    address public revenueDistributorAddress;
+    
+    constructor(address _accessController) {
+        accessController = _accessController;
+    }
+    
+    function setStableToken(address _token) external {
+        stableTokenAddress = _token;
+    }
+    
+    function setFactory(address _factory) external {
+        factoryAddress = _factory;
+    }
+    
+    function setRevenueDistributor(address _distributor) external {
+        revenueDistributorAddress = _distributor;
+    }
+    
+    function getAccessController() external view returns (address) {
+        return accessController;
+    }
+    
+    function stableToken() external view returns (address) {
+        return stableTokenAddress;
+    }
+    
+    function factory() external view returns (address) {
+        return factoryAddress;
+    }
+    
+    function revenueDistributor() external view returns (address) {
+        return revenueDistributorAddress;
+    }
+}
+
+contract TestERC20 {
     string public name;
     string public symbol;
     uint8 public decimals;
@@ -51,41 +90,60 @@ contract MockERC20 {
 
 contract BlockEstateRevenueDistributorTest is Test {
     BlockEstateAccessControl public accessController;
-    BlockEstateRouter public router;
+    MockRouterForRevenue public router;
     BlockEstateRevenueDistributor public distributor;
     BlockEstatePropertyToken public propertyToken;
-    MockERC20 public stableToken;
+    TestERC20 public stableToken;
     
-    address public admin = address(0x1);
+    address public admin;
     address public propertyOwner = address(0x2);
     address public investor1 = address(0x3);
     address public investor2 = address(0x4);
     address public investor3 = address(0x5);
+    address public securityGuard = address(0x9);
     
     bytes32 public constant ROLE_COMPLIANCE_OFFICER = keccak256("BLOCKESTATE_COMPLIANCE_OFFICER");
     bytes32 public constant ROLE_SECURITY_GUARD = keccak256("BLOCKESTATE_SECURITY_GUARD");
     
     function setUp() public {
+        // The test contract itself becomes the default admin
+        admin = address(this);
+        
+        // Give ETH to addresses that need gas sponsorship
+        uint256 ethAmount = 1 ether;
+        vm.deal(propertyOwner, ethAmount);
+        vm.deal(investor1, ethAmount);
+        vm.deal(investor2, ethAmount);
+        vm.deal(investor3, ethAmount);
+        vm.deal(securityGuard, ethAmount);
+        
+        // Deploy Access Controller
         accessController = new BlockEstateAccessControl();
         
+        // Grant roles - using admin (test contract)
         vm.prank(admin);
         accessController.grantRole(ROLE_COMPLIANCE_OFFICER, admin);
+        
         vm.prank(admin);
-        accessController.grantRole(ROLE_SECURITY_GUARD, admin);
+        accessController.grantRole(ROLE_SECURITY_GUARD, securityGuard);
         
-        router = new BlockEstateRouter(address(accessController));
+        // Deploy Router
+        router = new MockRouterForRevenue(address(accessController));
         
-        stableToken = new MockERC20("USD Coin", "USDC", 6);
+        // Deploy Stable Token
+        stableToken = new TestERC20("USD Coin", "USDC", 6);
         vm.prank(admin);
         router.setStableToken(address(stableToken));
         
+        // Deploy Revenue Distributor
         distributor = new BlockEstateRevenueDistributor(address(router));
         vm.prank(admin);
         router.setRevenueDistributor(address(distributor));
         
+        // Deploy Property Token
         propertyToken = new BlockEstatePropertyToken(
             address(router),
-            address(this),
+            address(this), // factory
             "Test Property",
             "TEST",
             admin,
@@ -93,12 +151,17 @@ contract BlockEstateRevenueDistributorTest is Test {
         );
         
         vm.prank(admin);
+        router.setFactory(address(this));
+        
+        // Approve KYC for investors
+        vm.prank(admin);
         accessController.approveKYC(investor1);
         vm.prank(admin);
         accessController.approveKYC(investor2);
         vm.prank(admin);
         accessController.approveKYC(investor3);
         
+        // Mint stable tokens
         stableToken.mint(propertyOwner, 100000 * 10**6);
         stableToken.mint(investor1, 10000 * 10**6);
         stableToken.mint(investor2, 10000 * 10**6);
@@ -247,7 +310,7 @@ contract BlockEstateRevenueDistributorTest is Test {
         vm.prank(propertyOwner);
         distributor.depositRevenue(address(propertyToken), revenueAmount);
         
-        vm.prank(admin);
+        vm.prank(securityGuard);
         accessController.blacklist(investor1);
         
         vm.expectRevert("BLACKLISTED");
@@ -292,8 +355,65 @@ contract BlockEstateRevenueDistributorTest is Test {
         uint256 totalSupply = propertyToken.totalSupply();
         uint256 investorBalance = propertyToken.balanceOf(investor1);
         uint256 expectedReward = (totalRevenue * investorBalance) / totalSupply;
-        uint256 actualReward = stableToken.balanceOf(investor1);
+        uint256 actualReward = stableToken.balanceOf(investor1) - 10000 * 10**6; // Subtract initial balance
         
         assertApproxEqAbs(actualReward, expectedReward, 10**6);
+    }
+    
+    function testRevenueWithZeroSupply() public {
+        // Don't mint any tokens - supply is 0
+        uint256 revenueAmount = 10000 * 10**6;
+        vm.prank(propertyOwner);
+        stableToken.approve(address(distributor), revenueAmount);
+        
+        vm.expectRevert("NO_SUPPLY");
+        vm.prank(propertyOwner);
+        distributor.depositRevenue(address(propertyToken), revenueAmount);
+    }
+    
+    function testClaimWithMultipleInvestors() public {
+        mintTokensForInvestors();
+        
+        uint256 revenueAmount = 30000 * 10**6;
+        vm.prank(propertyOwner);
+        stableToken.approve(address(distributor), revenueAmount);
+        vm.prank(propertyOwner);
+        distributor.depositRevenue(address(propertyToken), revenueAmount);
+        
+        // Calculate expected rewards based on holdings
+        uint256 totalSupply = propertyToken.totalSupply();
+        uint256 investor1Balance = propertyToken.balanceOf(investor1);
+        uint256 investor2Balance = propertyToken.balanceOf(investor2);
+        uint256 investor3Balance = propertyToken.balanceOf(investor3);
+        
+        uint256 expectedReward1 = (revenueAmount * investor1Balance) / totalSupply;
+        uint256 expectedReward2 = (revenueAmount * investor2Balance) / totalSupply;
+        uint256 expectedReward3 = (revenueAmount * investor3Balance) / totalSupply;
+        
+        // Claim rewards
+        uint256 initialBalance1 = stableToken.balanceOf(investor1);
+        uint256 initialBalance2 = stableToken.balanceOf(investor2);
+        uint256 initialBalance3 = stableToken.balanceOf(investor3);
+        
+        vm.prank(investor1);
+        distributor.claim(address(propertyToken));
+        
+        vm.prank(investor2);
+        distributor.claim(address(propertyToken));
+        
+        vm.prank(investor3);
+        distributor.claim(address(propertyToken));
+        
+        uint256 finalBalance1 = stableToken.balanceOf(investor1);
+        uint256 finalBalance2 = stableToken.balanceOf(investor2);
+        uint256 finalBalance3 = stableToken.balanceOf(investor3);
+        
+        uint256 actualReward1 = finalBalance1 - initialBalance1;
+        uint256 actualReward2 = finalBalance2 - initialBalance2;
+        uint256 actualReward3 = finalBalance3 - initialBalance3;
+        
+        assertApproxEqAbs(actualReward1, expectedReward1, 10**6);
+        assertApproxEqAbs(actualReward2, expectedReward2, 10**6);
+        assertApproxEqAbs(actualReward3, expectedReward3, 10**6);
     }
 }
