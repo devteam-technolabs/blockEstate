@@ -9,7 +9,6 @@ import {IBlockEstateAssetIssuance} from "./interfaces/IBlockEstateAssetIssuance.
  * @dev Responsible for deploying new property token contracts via the factory.
  */
 contract BlockEstateAssetIssuance is IBlockEstateAssetIssuance {
-
     address public factory;
     address public router;
 
@@ -29,22 +28,17 @@ contract BlockEstateAssetIssuance is IBlockEstateAssetIssuance {
         string memory name,
         string memory symbol,
         address admin,
-        address owner
+        address owner,
+        uint256 maxSupply,
+        uint256 sharePrice
     ) external override onlyFactory returns (address) {
         require(bytes(name).length > 0, "INVALID_NAME");
         require(bytes(symbol).length > 0, "INVALID_SYMBOL");
         require(admin != address(0), "INVALID_ADMIN");
         require(owner != address(0), "INVALID_OWNER");
+        require(maxSupply > 0, "INVALID_MAX_SUPPLY");
+        require(sharePrice > 0, "INVALID_SHARE_PRICE");
 
-        return address(
-            new BlockEstatePropertyToken(
-                router,
-                factory,
-                name,
-                symbol,
-                admin,
-                owner
-            )
-        );
+        return address(new BlockEstatePropertyToken(router, factory, name, symbol, admin, owner, maxSupply, sharePrice));
     }
 }

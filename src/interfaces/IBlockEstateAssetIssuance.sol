@@ -6,6 +6,11 @@ interface IBlockEstateAssetIssuance {
         string memory name,
         string memory symbol,
         address admin,
-        address owner
+        address owner,
+        uint256 maxSupply,
+        uint256 sharePrice
     ) external returns (address);
+
+    function factory() external view returns (address);
+    function router() external view returns (address);
 }

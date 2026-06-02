@@ -4,8 +4,8 @@ pragma solidity 0.8.33;
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
-import "../BlockEstateRouter.sol";
-import "../interfaces/IBlockEstateAccessController.sol";
+import {BlockEstateRouter} from "../BlockEstateRouter.sol";
+import {IBlockEstateAccessController} from "../interfaces/IBlockEstateAccessController.sol";
 
 /**
  * @title BlockEstateReferralRewards
@@ -18,6 +18,7 @@ contract BlockEstateReferralRewards is ReentrancyGuard {
 
     mapping(address => address) public referrerOf;
     mapping(address => uint256) public rewards;
+    uint256 public totalRewardsOutstanding;
 
     uint256 public referralBps = 500;
     uint256 public constant BPS = 10_000;
@@ -41,14 +42,12 @@ contract BlockEstateReferralRewards is ReentrancyGuard {
     }
 
     modifier onlyAdmin() {
-        IBlockEstateAccessController(router.accessController())
-            .enforceAdmin(msg.sender);
+        IBlockEstateAccessController(router.accessController()).enforceAdmin(msg.sender);
         _;
     }
 
     modifier onlyCompliant(address user) {
-        IBlockEstateAccessController ac =
-            IBlockEstateAccessController(router.accessController());
+        IBlockEstateAccessController ac = IBlockEstateAccessController(router.accessController());
 
         require(!ac.isBlacklisted(user), "BLACKLISTED");
         require(ac.isKYCApproved(user), "KYC_REQUIRED");
@@ -59,16 +58,12 @@ contract BlockEstateReferralRewards is ReentrancyGuard {
                             REFERRAL SETUP
     //////////////////////////////////////////////////////////////*/
 
-    function setReferrer(address referrer)
-        external
-        onlyCompliant(msg.sender)
-    {
+    function setReferrer(address referrer) external onlyCompliant(msg.sender) {
         require(referrer != address(0), "INVALID_REFERRER");
         require(referrer != msg.sender, "SELF_REFERRAL");
         require(referrerOf[msg.sender] == address(0), "ALREADY_SET");
 
-        IBlockEstateAccessController ac =
-            IBlockEstateAccessController(router.accessController());
+        IBlockEstateAccessController ac = IBlockEstateAccessController(router.accessController());
 
         require(ac.isKYCApproved(referrer), "REFERRER_NOT_KYC");
 
@@ -81,10 +76,7 @@ contract BlockEstateReferralRewards is ReentrancyGuard {
                             ACCOUNTING
     //////////////////////////////////////////////////////////////*/
 
-    function registerReward(address user, uint256 investmentAmount)
-        external
-        onlyFactory
-    {
+    function registerReward(address user, uint256 investmentAmount) external onlyFactory {
         address ref = referrerOf[user];
         if (ref == address(0)) return;
 
@@ -92,6 +84,7 @@ contract BlockEstateReferralRewards is ReentrancyGuard {
         if (reward == 0) return;
 
         rewards[ref] += reward;
+        totalRewardsOutstanding += reward;
 
         emit RewardAdded(ref, user, reward);
     }
@@ -100,18 +93,16 @@ contract BlockEstateReferralRewards is ReentrancyGuard {
                                 CLAIM
     //////////////////////////////////////////////////////////////*/
 
-    function claim()
-        external
-        nonReentrant
-        onlyCompliant(msg.sender)
-    {
+    function claim() external nonReentrant onlyCompliant(msg.sender) {
         uint256 amount = rewards[msg.sender];
         require(amount > 0, "NO_REWARD");
 
         uint256 balance = IERC20(router.stableToken()).balanceOf(address(this));
+        require(balance >= totalRewardsOutstanding, "INSUFFICIENT_RESERVES");
         require(balance >= amount, "INSUFFICIENT_FUNDS");
 
         rewards[msg.sender] = 0;
+        totalRewardsOutstanding -= amount;
 
         IERC20(router.stableToken()).safeTransfer(msg.sender, amount);
 
